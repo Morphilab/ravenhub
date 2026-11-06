@@ -1,0 +1,41 @@
+# ── Secretos & credenciales ──
+# Los ejemplos usan la convención `example.env` para no caer en este patrón.
+.env
+.env.*
+*.pem
+*.key
+
+# Seeds locales con credenciales reales: las plantillas públicas
+# (seed.example.yaml, seed.demo.yaml) sí se trackean.
+/seed.yaml
+/seed.local.yaml
+/dev/seed.yaml
+
+# ── Binarios Go ──
+/bin/
+/dist/
+/ravenhub
+/ravenctl
+
+# ── Artefactos de build/test ──
+*.out
+coverage.*
+/testdata/output/
+
+# ── Runtime de compose local (volúmenes, dumps) ──
+/data/
+*.dump
+*.sql.gz
+*.age
+
+# ── Logs ──
+logs/
+*.log
+
+# ── Python ──
+__pycache__/
+*.pyc
+
+# ── OS ──
+.DS_Store
+backups/

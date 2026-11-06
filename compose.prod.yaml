@@ -1,0 +1,109 @@
+# ── Producción: VPS propio. Despliegue = git pull && docker compose -f compose.prod.yaml up -d --build ──
+# TLS lo termina Caddy con Let's Encrypt.
+
+x-logging: &default-logging
+  # retención de logs acotada: los errores/log channel pueden contener PII y
+  # json-file sin límite crece hasta llenar el disco del VPS.
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    logging: *default-logging
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-ravenhub}
+    volumes:
+      - pgdata-prod:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: always          # la disponibilidad la compran restart + watchdog
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    # SIN ports: Postgres no se expone al host en producción
+
+  ravenhub:
+    build:
+      context: .
+      args:
+        VERSION: ${RAVENHUB_VERSION:-dev}
+    command: ["serve"]
+    logging: *default-logging
+    stop_grace_period: 30s
+    env_file: .env
+    environment:
+      RAVENHUB_DSN: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ravenhub}
+      # Caddy hace proxy a ravenhub:8080; el .env no decide el puerto del contenedor
+      RAVENHUB_LISTEN: ":8080"
+      # el Hub no necesita el bot bootstrap del watchdog
+      WATCHDOG_BOT_TOKEN: ""
+      WATCHDOG_CHAT_ID: ""
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: always
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    # hardening de contenedor: sin caps + FS read-only (el binario no
+    # escribe a disco; logs a stdout). Postgres y Caddy se quedan fuera:
+    # necesitan sus caps propias (CHOWN / NET_BIND_SERVICE).
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  caddy:
+    image: caddy:2-alpine
+    logging: *default-logging
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: always
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      - ravenhub
+
+  watchdog:
+    # Cron externo que vigila /healthz y alerta por un bot bootstrap
+    # INDEPENDIENTE de la cola del Hub (¿quién notifica al notificador?)
+    image: alpine:3.23
+    command: ["/bin/sh", "/scripts/watchdog.sh"]
+    logging: *default-logging
+    environment:
+      WATCHDOG_HEALTHZ_URL: http://ravenhub:8080/healthz
+      WATCHDOG_READYZ_URL: http://ravenhub:8080/readyz
+      WATCHDOG_BOT_TOKEN: ${WATCHDOG_BOT_TOKEN:-}
+      WATCHDOG_CHAT_ID: ${WATCHDOG_CHAT_ID:-}
+      WATCHDOG_INTERVAL: ${WATCHDOG_INTERVAL:-300}
+    volumes:
+      - ./scripts:/scripts:ro
+    restart: always
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      - ravenhub
+
+volumes:
+  pgdata-prod:
+  caddy-data:
+  caddy-config:

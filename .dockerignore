@@ -1,0 +1,25 @@
+# El contexto de build solo debe llevar lo necesario para compilar la imagen.
+# .env y dev/ concentran secretos y material local: la exclusión de git
+# NO afecta a docker, y sin esto `docker build` enviaba el .env completo al
+# daemon y lo materializaba en la capa de build (accesible vía docker save).
+.env
+.env.*
+example.env
+seed.yaml
+seed.local.yaml
+dev/
+AGENTS.md
+backups/
+bin/
+data/
+logs/
+.git/
+.zcode/
+.zcodeignore
+docs/
+CHANGELOG.md
+*.sql.gz
+*.age
+*.log
+*.out
+coverage.*

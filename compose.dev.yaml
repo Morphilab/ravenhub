@@ -1,0 +1,122 @@
+# ── Desarrollo: Postgres siempre; el Hub y Mailpit son opcionales ──
+# Uso habitual (local-first, hot-reload natural con `go run`):
+#   docker compose -f compose.dev.yaml up -d postgres
+#   make run            # go run ./cmd/ravenhub serve
+#
+# Alternativa todo-en-docker: docker compose -f compose.dev.yaml --profile full up -d
+# Email de pruebas (bandeja en http://localhost:8025): --profile mailpit
+
+x-logging: &default-logging
+  # logs con PII/errores no pueden crecer sin límite (retención de la DB ≠
+  # retención de Docker). 10 MB × 3 archivos por servicio.
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    logging: *default-logging
+    # paridad con prod: mismas defensas en dev y prod
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ravenhub}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ravenhub-dev}
+      POSTGRES_DB: ${POSTGRES_DB:-ravenhub}
+    ports:
+      # bind a localhost: la DB del hub no debe quedar alcanzable desde la
+      # red local
+      - "127.0.0.1:${POSTGRES_PORT:-5435}:5432"
+    volumes:
+      - pgdata-dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ravenhub}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  ravenhub:
+    build:
+      context: .
+      args:
+        VERSION: ${RAVENHUB_VERSION:-dev}
+    command: ["serve"]
+    logging: *default-logging
+    stop_grace_period: 30s
+    env_file: .env
+    environment:
+      # dentro de la red compose el host NO es localhost
+      RAVENHUB_DSN: postgres://${POSTGRES_USER:-ravenhub}:${POSTGRES_PASSWORD:-ravenhub-dev}@postgres:5432/${POSTGRES_DB:-ravenhub}
+      # el contenedor SIEMPRE escucha en 8080 (Dockerfile EXPOSE); el .env
+      # solo decide el puerto cuando el hub corre en el host (`make run`)
+      RAVENHUB_LISTEN: ":8080"
+      # dev explícito: permite el admin token autogenerado (impreso con
+      # `docker compose logs ravenhub`) cuando .env no trae uno
+      RAVENHUB_DEV: "1"
+      # el Hub no necesita el bot "independiente" del watchdog: no se lo
+      # pasamos aunque esté en .env.
+      WATCHDOG_BOT_TOKEN: ""
+      WATCHDOG_CHAT_ID: ""
+    ports:
+      - "127.0.0.1:8085:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    # hardening de contenedor: no-root (Dockerfile) + sin caps + FS
+    # read-only; el binario no escribe nada a disco (la DB es remota, los
+    # logs van a stdout) — /tmp en tmpfs por si algo lo necesita
+    cap_drop: [ALL]
+    read_only: true
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+    profiles: ["full"]
+
+  mailpit:
+    # pin: era el único tag flotante del parque (latest se mueve varias veces
+    # por semana, y es el receptor de credenciales SMTP de prueba)
+    image: axllent/mailpit:v1.33
+    logging: *default-logging
+    ports:
+      - "127.0.0.1:8025:8025"   # UI de la bandeja
+      - "127.0.0.1:1025:1025"   # SMTP de pruebas (configúralo como creds del canal email)
+    restart: unless-stopped
+    profiles: ["mailpit"]
+
+  watchdog:
+    # Vigilancia del hub también en dev (el modo de fallar del hub es
+    # silencioso): docker compose -f compose.dev.yaml --profile full --profile
+    # watchdog up -d. Para el hub en host (`make run`) usa `make watchdog`.
+    # Sin WATCHDOG_BOT_TOKEN las alertas solo aparecen en este log.
+    image: alpine:3.23
+    command: ["/bin/sh", "/scripts/watchdog.sh"]
+    logging: *default-logging
+    environment:
+      WATCHDOG_HEALTHZ_URL: http://ravenhub:8080/healthz
+      WATCHDOG_READYZ_URL: http://ravenhub:8080/readyz
+      WATCHDOG_METRICS_URL: http://ravenhub:8080/metrics
+      WATCHDOG_BOT_TOKEN: ${WATCHDOG_BOT_TOKEN:-}
+      WATCHDOG_CHAT_ID: ${WATCHDOG_CHAT_ID:-}
+      WATCHDOG_INTERVAL: ${WATCHDOG_INTERVAL:-60}
+    volumes:
+      - ./scripts:/scripts:ro
+    restart: unless-stopped
+    # solo necesita wget/awk/sh: sin caps y FS read-only
+    cap_drop: [ALL]
+    read_only: true
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+    profiles: ["watchdog"]
+
+volumes:
+  pgdata-dev:

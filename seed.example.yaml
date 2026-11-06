@@ -1,0 +1,79 @@
+# RavenHub — seed declarativo (plantilla pública, solo placeholders)
+#
+# Copia este archivo a dev/seed.yaml y rellena los valores reales,
+# o exporta las variables ${...} en tu .env antes de `make seed`:
+#   cp seed.example.yaml dev/seed.yaml && $EDITOR dev/seed.yaml
+#   make seed        # equivale a: ravenhub import dev/seed.yaml
+#
+# Reglas:
+#   - Los secretos NUNCA van en este archivo: usa ${ENV_VAR} (se expanden
+#     del entorno/.env en el import).
+#   - Reimportar es idempotente y declarativo: actualiza cuentas/destinos/
+#     grupos/plantillas/reglas y las options del proyecto, sincroniza los
+#     scopes de los tokens existentes y solo crea los tokens que falten (los
+#     secretos NO se regeneran). Lo que exista en la DB y no esté declarado
+#     aquí se conserva; las reglas no declaradas se avisan por stdout.
+#   - Los tokens nuevos se imprimen UNA vez por stdout.
+#   - options se valida estricto: claves conocidas (ttl, digest_window) y
+#     valores legibles — un typo falla el import, no se ignora.
+
+projects:
+  - name: proyecto1
+    # options:                                # opcional (validación estricta)
+    #   ttl: {urgent: 10m, normal: 2h}        # TTL por prioridad (minúsculas)
+    #   digest_window: 10m                    # anti-spam low/normal (≥1s)
+    tokens:
+      - name: agente-principal            # token sin scopes = todo el proyecto
+      - name: agente-reporting            # token acotado (scopes)
+        scopes:
+          destinations: [oncall]          # solo puede usar este grupo
+          max_priority: normal            # no puede enviar urgent/high
+    accounts:
+      - label: bot-telegram               # una cuenta = una credencial
+        channel: telegram
+        creds:
+          bot_token: ${TELEGRAM_BOT_TOKEN}
+      - label: smtp-correo
+        channel: email
+        creds:
+          host: ${SMTP_HOST}
+          port: 587
+          username: ${SMTP_USER}
+          password: ${SMTP_PASSWORD}
+          from: ${SMTP_USER}              # Gmail exige From = cuenta autenticada
+      - label: log-local                  # dry-run: no envía nada real
+        channel: log
+        creds: {}
+    destinations:
+      - name: telegram:alerts
+        account: bot-telegram
+        target:
+          chat_id: "${TELEGRAM_CHAT_ID}"  # número o -100... para grupos
+        quiet_hours:                      # normal/low/high se difieren; urgent pasa
+          start: "23:00"
+          end: "08:00"
+          tz: "Europe/Madrid"
+      - name: email:ops
+        account: smtp-correo
+        target:
+          to: ["${SMTP_USER}"]             # tu buzón; cámbialo por otro si quieres
+      - name: log:dev
+        account: log-local
+        target: {}
+    groups:
+      - name: oncall                      # alias: entrega a TODOS sus destinos (fan-out)
+        destinations: [telegram:alerts, email:ops]
+    routing_rules:                        # opcional: añaden destinos según tags/prioridad
+      - name: urgentes-a-oncall
+        match_priority: urgent            # prioridad mínima
+        destinations: [oncall]
+      # - name: errores-prod
+      #   match_tags: [error]             # todas deben estar (AND)
+      #   match_payload: {env: prod}      # subconjunto de data (opcional)
+      #   destinations: [email:ops]
+      #   stop_processing: false          # true = no evaluar más reglas
+    templates:
+      - name: error_pipeline
+        body: "El servicio {{service}} falló (exit {{exit_code}}).\n{{message}}"
+      - name: deploy_ok
+        body: "Deploy de {{service}} a {{env}} completado."

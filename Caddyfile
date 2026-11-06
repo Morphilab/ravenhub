@@ -1,0 +1,19 @@
+# Reemplaza notify.tudominio.com por tu dominio real.
+# Caddy obtiene y renueva el certificado TLS automáticamente.
+notify.tudominio.com {
+	# /metrics y /readyz exponen estado operativo a cualquiera: el watchdog
+	# los consulta por la red de compose, no por el vhost público.
+	@ops path /metrics /readyz
+	respond @ops 404
+	# HSTS + cabeceras de defensa en profundidad (el API es JSON, sin HTML
+	# propio; no se añade CSP porque no hay documentos que la necesiten).
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+	}
+	reverse_proxy ravenhub:8080
+	# TLS: Let's Encrypt automático. HTTP solo llega como redirect a HTTPS.
+}

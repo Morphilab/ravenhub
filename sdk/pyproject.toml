@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ravenhub"
+version = "0.2.0"
+description = "Cliente Python de RavenHub: notificar con una sola llamada HTTP (notify, notify_safe, idempotencia por periodo)"
+requires-python = ">=3.10"
+# Sin dependencias obligatorias: usa requests si está instalado, si no urllib.
+dependencies = []
+
+[project.optional-dependencies]
+requests = ["requests>=2.25"]
+
+[tool.setuptools]
+py-modules = ["ravenhub"]

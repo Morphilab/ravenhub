@@ -1,0 +1,17 @@
+# RavenHub — seed DEMO (solo canal log, sin credenciales externas)
+#
+# Se usa como fallback de `make seed` cuando no existe `dev/seed.yaml`:
+# permite probar el quickstart sin configurar Telegram/SMTP.
+# Para provisioning real, copia `seed.example.yaml` a `dev/seed.yaml`.
+projects:
+  - name: demo
+    tokens:
+      - name: demo
+    accounts:
+      - label: log-local
+        channel: log
+        creds: {}
+    destinations:
+      - name: log:dev
+        account: log-local
+        target: {}
